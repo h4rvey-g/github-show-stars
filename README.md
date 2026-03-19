@@ -4,7 +4,7 @@ A [Tampermonkey](https://www.tampermonkey.net/) userscript that automatically
 shows **⭐ star counts** next to every GitHub repository link on any webpage you
 visit.
 
-![Screenshot showing star badges next to GitHub links](https://raw.githubusercontent.com/h4rvey-g/github-show-stars/main/screenshot.png)
+![Screenshot showing star badges next to GitHub links](https://raw.githubusercontent.com/h4rvey-g/github-show-stars/master/screenshot.png)
 
 ---
 
@@ -27,7 +27,7 @@ visit.
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension.
 2. Click the link below (or open the raw file) to install the script:
 
-   **[➕ Install github-show-stars.user.js](https://raw.githubusercontent.com/h4rvey-g/github-show-stars/main/github-show-stars.user.js)**
+   **[➕ Install github-show-stars.user.js](https://raw.githubusercontent.com/h4rvey-g/github-show-stars/master/github-show-stars.user.js)**
 
    Tampermonkey will open an installation dialog – click **Install**.
 

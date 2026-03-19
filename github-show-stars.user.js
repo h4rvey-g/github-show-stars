@@ -10,6 +10,8 @@
 // @grant        GM_setValue
 // @connect      api.github.com
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/h4rvey-g/github-show-stars/master/github-show-stars.user.js
+// @downloadURL  https://raw.githubusercontent.com/h4rvey-g/github-show-stars/master/github-show-stars.user.js
 // ==/UserScript==
 
 (function () {
