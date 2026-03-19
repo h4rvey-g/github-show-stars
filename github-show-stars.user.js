@@ -42,7 +42,7 @@
     const BADGE_CLASS = 'gss-star-badge';
 
     // -------------------------------------------------------------------------
-    // In-memory cache  { "owner/repo": { stars: Number, ts: Number } }
+    // In-memory cache  { "owner/repo": { stars: Number, pushedAt: String, createdAt: String, ts: Number } }
     // -------------------------------------------------------------------------
     const cache = {};
 
@@ -113,6 +113,26 @@
     // -------------------------------------------------------------------------
 
     /**
+     * Format a date string as a human-readable relative time.
+     * e.g.  "just now"  |  "5 minutes ago"  |  "3 hours ago"  |  "2 days ago"
+     *       "4 months ago"  |  "2 years ago"
+     */
+    function timeAgo(dateString) {
+        const seconds = Math.floor((Date.now() - new Date(dateString)) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+        const days = Math.floor(hours / 24);
+        if (days <= 30) return `${days} day${days !== 1 ? 's' : ''} ago`;
+        const months = Math.floor(days / 30.44); // average days per month (365.25 / 12)
+        if (months < 12) return `${months} month${months !== 1 ? 's' : ''} ago`;
+        const years = Math.floor(days / 365.25);
+        return `${years} year${years !== 1 ? 's' : ''} ago`;
+    }
+
+    /**
      * Format a raw star count into a compact human-readable string.
      * e.g.  42 → "42"  |  1234 → "1.2k"  |  23456 → "23.5k"  |  1234567 → "1.2M"
      */
@@ -153,10 +173,10 @@
     }
 
     /**
-     * Fetch star count for "owner/repo" via the GitHub REST API.
-     * Returns a Promise<number>.
+     * Fetch repo info for "owner/repo" via the GitHub REST API.
+     * Returns a Promise<{ stars, pushedAt, createdAt }>.
      */
-    function fetchStars(repoPath) {
+    function fetchRepoInfo(repoPath) {
         return new Promise((resolve, reject) => {
             const headers = {
                 Accept: 'application/vnd.github+json',
@@ -174,7 +194,11 @@
                     if (response.status === 200) {
                         try {
                             const data = JSON.parse(response.responseText);
-                            resolve(data.stargazers_count);
+                            resolve({
+                                stars: data.stargazers_count,
+                                pushedAt: data.pushed_at,
+                                createdAt: data.created_at,
+                            });
                         } catch {
                             reject(new Error('JSON parse error'));
                         }
@@ -194,39 +218,39 @@
     }
 
     /**
-     * Return the cached star count if still fresh, or null otherwise.
+     * Return the cached repo info if still fresh, or null otherwise.
      */
     function getCached(repoPath) {
         const entry = cache[repoPath];
         if (!entry) return null;
         if (Date.now() - entry.ts > CACHE_TTL_MS) return null;
-        return entry.stars;
+        return { stars: entry.stars, pushedAt: entry.pushedAt, createdAt: entry.createdAt };
     }
 
     /**
-     * Store a star count in the cache.
+     * Store repo info in the cache.
      */
-    function setCached(repoPath, stars) {
-        cache[repoPath] = { stars, ts: Date.now() };
+    function setCached(repoPath, info) {
+        cache[repoPath] = { stars: info.stars, pushedAt: info.pushedAt, createdAt: info.createdAt, ts: Date.now() };
     }
 
     // In-flight promise map to deduplicate concurrent requests for the same repo
     const inFlight = {};
 
     /**
-     * Get star count for a repo, using cache and deduplication.
+     * Get repo info for a repo, using cache and deduplication.
      */
-    function getStars(repoPath) {
+    function getRepoInfo(repoPath) {
         const cached = getCached(repoPath);
         if (cached !== null) return Promise.resolve(cached);
 
         if (inFlight[repoPath]) return inFlight[repoPath];
 
-        const promise = fetchStars(repoPath)
-            .then((stars) => {
-                setCached(repoPath, stars);
+        const promise = fetchRepoInfo(repoPath)
+            .then((info) => {
+                setCached(repoPath, info);
                 delete inFlight[repoPath];
-                return stars;
+                return info;
             })
             .catch((err) => {
                 delete inFlight[repoPath];
@@ -253,13 +277,16 @@
     }
 
     /**
-     * Update badge once we have the star count (or an error).
+     * Update badge once we have the repo info (or an error).
      */
-    function updateBadge(badge, repoPath, stars) {
+    function updateBadge(badge, repoPath, info) {
         badge.classList.remove(`${BADGE_CLASS}--loading`, `${BADGE_CLASS}--error`);
-        badge.setAttribute('aria-label', `${stars} stars on GitHub`);
-        badge.title = `${stars.toLocaleString()} stars — ${repoPath}`;
-        badge.textContent = `⭐ ${formatStars(stars)}`;
+        badge.setAttribute('aria-label', `${info.stars} stars on GitHub`);
+        let tooltip = `${info.stars.toLocaleString()} stars — ${repoPath}`;
+        if (info.pushedAt) tooltip += `\nLast commit: ${timeAgo(info.pushedAt)}`;
+        if (info.createdAt) tooltip += `\nCreated: ${timeAgo(info.createdAt)}`;
+        badge.title = tooltip;
+        badge.textContent = `⭐ ${formatStars(info.stars)}`;
     }
 
     function setBadgeError(badge, repoPath, err) {
@@ -288,8 +315,8 @@
         const badge = createBadge();
         anchor.insertAdjacentElement('afterend', badge);
 
-        getStars(repoPath)
-            .then((stars) => updateBadge(badge, repoPath, stars))
+        getRepoInfo(repoPath)
+            .then((info) => updateBadge(badge, repoPath, info))
             .catch((err) => setBadgeError(badge, repoPath, err));
     }
 
