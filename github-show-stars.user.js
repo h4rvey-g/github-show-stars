@@ -64,6 +64,21 @@
     /** Attribute added to links that have already been processed. */
     const PROCESSED_ATTR = 'data-gss-processed';
 
+    /** Substring that must appear in an href for the CSS pre-filter to match. */
+    const GITHUB_HREF_FILTER = '://github.com/';
+
+    /**
+     * Returns true only when the href's hostname is exactly "github.com".
+     * Used to guard individual anchor nodes in the MutationObserver path.
+     */
+    function isGitHubComLink(href) {
+        try {
+            return new URL(href).hostname === 'github.com';
+        } catch {
+            return false;
+        }
+    }
+
     /** Class name used on injected star badges. */
     const BADGE_CLASS = 'gss-star-badge';
 
@@ -383,7 +398,7 @@
 
     function enqueueLinks(root) {
         const anchors = root.querySelectorAll
-            ? root.querySelectorAll(`a[href*="github.com"]:not([${PROCESSED_ATTR}])`)
+            ? root.querySelectorAll(`a[href*="${GITHUB_HREF_FILTER}"]:not([${PROCESSED_ATTR}])`)
             : [];
         anchors.forEach((a) => pendingAnchors.push(a));
         if (!idleCallbackScheduled && pendingAnchors.length > 0) {
@@ -400,7 +415,7 @@
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
                 // Check the node itself
-                if (node.tagName === 'A') pendingAnchors.push(node);
+                if (node.tagName === 'A' && isGitHubComLink(node.href)) pendingAnchors.push(node);
                 // Check descendants
                 enqueueLinks(node);
             }
