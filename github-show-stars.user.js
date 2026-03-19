@@ -8,6 +8,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @connect      api.github.com
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/h4rvey-g/github-show-stars/master/github-show-stars.user.js
@@ -30,7 +31,32 @@
      * while the userscript is installed:
      *   GM_setValue('github_token', 'ghp_yourTokenHere');
      */
-    const GITHUB_TOKEN = GM_getValue('github_token', '');
+    let GITHUB_TOKEN = GM_getValue('github_token', '');
+
+    // -------------------------------------------------------------------------
+    // Menu command – let the user set / clear the GitHub token from the
+    // Tampermonkey extension menu without touching the browser console.
+    // -------------------------------------------------------------------------
+    GM_registerMenuCommand('Set GitHub Token', () => {
+        const current = GM_getValue('github_token', '');
+        const input = prompt(
+            'Enter your GitHub Personal Access Token.\n' +
+            'Leave blank and click OK to clear the stored token.\n\n' +
+            (current ? 'A token is currently set.' : 'No token is currently set.'),
+            current
+        );
+        // prompt() returns null when the user clicks Cancel – do nothing.
+        if (input === null) return;
+
+        const trimmed = input.trim();
+        GM_setValue('github_token', trimmed);
+        GITHUB_TOKEN = trimmed;
+        if (trimmed) {
+            alert('GitHub token saved. Reload the page to apply the new token.');
+        } else {
+            alert('GitHub token cleared. Reload the page to apply the change.');
+        }
+    });
 
     /** How long (ms) to keep a cached star-count before re-fetching. */
     const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
