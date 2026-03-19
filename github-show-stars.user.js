@@ -84,6 +84,26 @@
                 border-color: #f8d7da;
                 background: #fff0f0;
             }
+            @media (prefers-color-scheme: dark) {
+                .${BADGE_CLASS} {
+                    background: #1c2d40;
+                    color: #58a6ff;
+                    border-color: #1f4068;
+                }
+                .${BADGE_CLASS}:hover {
+                    background: #1f3a5c;
+                }
+                .${BADGE_CLASS}--loading {
+                    color: #8b949e;
+                    border-color: #30363d;
+                    background: #161b22;
+                }
+                .${BADGE_CLASS}--error {
+                    color: #ff7b72;
+                    border-color: #6e2f2f;
+                    background: #3d1414;
+                }
+            }
         `;
         document.head.appendChild(style);
     })();
