@@ -320,14 +320,50 @@
             .catch((err) => setBadgeError(badge, repoPath, err));
     }
 
-    /**
-     * Scan a subtree for unprocessed GitHub repo links.
-     */
-    function processLinks(root) {
+    // -------------------------------------------------------------------------
+    // Idle-callback scheduler – process links in small chunks to avoid long
+    // synchronous tasks (>50 ms) that trigger GitHub's long-task analytics
+    // observer, which then tries to POST to collector.github.com and gets
+    // blocked by ad-blockers (ERR_BLOCKED_BY_CLIENT).
+    // -------------------------------------------------------------------------
+
+    /** Maximum number of anchors to process per idle slice. */
+    const BATCH_SIZE = 20;
+
+    /** Pending anchor queue fed by the MutationObserver and initial scan. */
+    const pendingAnchors = [];
+    let idleCallbackScheduled = false;
+
+    const scheduleIdle = typeof requestIdleCallback === 'function'
+        ? (cb) => requestIdleCallback(cb, { timeout: 2000 })
+        : (cb) => setTimeout(cb, 0);
+
+    function flushPending(deadline) {
+        const hasTime = () => deadline && typeof deadline.timeRemaining === 'function'
+            ? deadline.timeRemaining() > 0
+            : true;
+
+        while (pendingAnchors.length > 0 && hasTime()) {
+            const batch = pendingAnchors.splice(0, BATCH_SIZE);
+            batch.forEach(processLink);
+        }
+
+        if (pendingAnchors.length > 0) {
+            scheduleIdle(flushPending);
+        } else {
+            idleCallbackScheduled = false;
+        }
+    }
+
+    function enqueueLinks(root) {
         const anchors = root.querySelectorAll
             ? root.querySelectorAll(`a[href*="github.com"]:not([${PROCESSED_ATTR}])`)
             : [];
-        anchors.forEach(processLink);
+        anchors.forEach((a) => pendingAnchors.push(a));
+        if (!idleCallbackScheduled && pendingAnchors.length > 0) {
+            idleCallbackScheduled = true;
+            scheduleIdle(flushPending);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -338,15 +374,19 @@
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
                 // Check the node itself
-                if (node.tagName === 'A') processLink(node);
+                if (node.tagName === 'A') pendingAnchors.push(node);
                 // Check descendants
-                processLinks(node);
+                enqueueLinks(node);
             }
+        }
+        if (!idleCallbackScheduled && pendingAnchors.length > 0) {
+            idleCallbackScheduled = true;
+            scheduleIdle(flushPending);
         }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // Initial scan of the already-loaded DOM
-    processLinks(document);
+    // Initial scan of the already-loaded DOM (batched to avoid long tasks)
+    enqueueLinks(document);
 })();
