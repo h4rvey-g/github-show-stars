@@ -40,8 +40,18 @@ address. If you visit pages with many GitHub links you may hit this limit quickl
 
 To raise the limit to **5,000 requests/hour**, create a fine-grained (or classic)
 [Personal Access Token](https://github.com/settings/tokens) with **no extra
-scopes** (read-only public data is sufficient) and store it once via the browser
-console:
+scopes** (read-only public data is sufficient), then store it using one of the
+methods below.
+
+### Method 1 – Tampermonkey script menu (recommended)
+
+1. Click the **Tampermonkey icon** in your browser toolbar.
+2. Hover over **GitHub Show Stars** in the script list.
+3. Click **Set GitHub Token**.
+4. Paste your token in the prompt and click **OK**.
+5. Reload the page for the new token to take effect.
+
+### Method 2 – Browser DevTools console
 
 ```js
 // Run this in the browser DevTools console on any page where the script is active
