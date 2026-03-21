@@ -68,16 +68,47 @@
     const GITHUB_HREF_FILTER = '://github.com/';
 
     /**
-     * Returns true only when the href's hostname is exactly "github.com".
-     * Used to guard individual anchor nodes in the MutationObserver path.
+     * GitHub top-level routes that are not repository owners.
+     * This keeps us from treating pages like /settings/tokens as repos.
      */
-    function isGitHubComLink(href) {
-        try {
-            return new URL(href).hostname === 'github.com';
-        } catch {
-            return false;
-        }
-    }
+    const RESERVED_TOP_LEVEL_PATHS = new Set([
+        'about',
+        'account',
+        'apps',
+        'blog',
+        'collections',
+        'contact',
+        'customer-stories',
+        'enterprise',
+        'events',
+        'explore',
+        'features',
+        'gist',
+        'git-guides',
+        'github-copilot',
+        'issues',
+        'login',
+        'logout',
+        'marketplace',
+        'mobile',
+        'new',
+        'notifications',
+        'orgs',
+        'organizations',
+        'pricing',
+        'pulls',
+        'readme',
+        'search',
+        'security',
+        'settings',
+        'signup',
+        'site',
+        'sponsors',
+        'team',
+        'teams',
+        'topics',
+        'trending',
+    ]);
 
     /** Class name used on injected star badges. */
     const BADGE_CLASS = 'gss-star-badge';
@@ -188,8 +219,8 @@
     }
 
     /**
-     * Extract "owner/repo" from a URL string.
-     * Returns null if the URL does not point to a GitHub repository root.
+     * Extract "owner/repo" from a GitHub repository URL.
+     * Returns null if the URL does not point to a page inside a GitHub repo.
      */
     function extractRepo(href) {
         try {
@@ -197,15 +228,14 @@
             // Only handle github.com links
             if (url.hostname !== 'github.com') return null;
 
-            // pathname = /owner/repo  (possibly with trailing slash)
-            const parts = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
-            if (parts.length !== 2) return null;
+            const parts = url.pathname.split('/').filter(Boolean);
+            if (parts.length < 2) return null;
 
             const [owner, repo] = parts;
-            // Exclude obviously non-repo paths (e.g. search, orgs, settings…)
             if (!owner || !repo) return null;
-            // Ignore dotfiles / GitHub meta pages
             if (owner.startsWith('.') || repo.startsWith('.')) return null;
+            if (RESERVED_TOP_LEVEL_PATHS.has(owner.toLowerCase())) return null;
+            if (repo === 'repositories') return null;
 
             return `${owner}/${repo}`;
         } catch {
@@ -415,7 +445,7 @@
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
                 // Check the node itself
-                if (node.tagName === 'A' && isGitHubComLink(node.href)) pendingAnchors.push(node);
+                if (node.tagName === 'A' && extractRepo(node.href)) pendingAnchors.push(node);
                 // Check descendants
                 enqueueLinks(node);
             }
