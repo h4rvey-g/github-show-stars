@@ -219,8 +219,8 @@
     }
 
     /**
-     * Extract "owner/repo" from a GitHub repository root URL.
-     * Returns null unless the URL is exactly github.com/<owner>/<repo>.
+     * Extract "owner/repo" from a GitHub repository URL.
+     * Returns null if the URL does not point to a page inside a GitHub repo.
      */
     function extractRepo(href) {
         try {
@@ -228,13 +228,14 @@
             // Only handle github.com links
             if (url.hostname !== 'github.com') return null;
 
-            const parts = url.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-            if (parts.length !== 2) return null;
+            const parts = url.pathname.split('/').filter(Boolean);
+            if (parts.length < 2) return null;
 
             const [owner, repo] = parts;
             if (!owner || !repo) return null;
             if (owner.startsWith('.') || repo.startsWith('.')) return null;
             if (RESERVED_TOP_LEVEL_PATHS.has(owner.toLowerCase())) return null;
+            if (repo === 'repositories') return null;
 
             return `${owner}/${repo}`;
         } catch {
