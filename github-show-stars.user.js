@@ -220,7 +220,8 @@
 
     /**
      * Extract "owner/repo" from a GitHub repository URL.
-     * Returns null if the URL does not point to a page inside a GitHub repo.
+     * Returns null unless the URL is the repository root itself
+     * (e.g. https://github.com/owner/repo or /owner/repo/).
      */
     function extractRepo(href) {
         try {
@@ -229,7 +230,7 @@
             if (url.hostname !== 'github.com') return null;
 
             const parts = url.pathname.split('/').filter(Boolean);
-            if (parts.length < 2) return null;
+            if (parts.length !== 2) return null;
 
             const [owner, repo] = parts;
             if (!owner || !repo) return null;
