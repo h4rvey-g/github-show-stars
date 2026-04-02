@@ -370,6 +370,51 @@
     }
 
     // -------------------------------------------------------------------------
+    // Batch-on-scroll loading
+    // -------------------------------------------------------------------------
+
+    /** Number of repositories fetched per scroll-triggered batch. */
+    const FETCH_BATCH_SIZE = 30;
+
+    /** Ordered list of discovered repo entries. */
+    const repoEntries = [];
+
+    /** Batch indexes that are allowed to start fetching. */
+    const unlockedBatches = new Set([0]);
+
+    /** Intersection observer used to unlock a batch when user scrolls to it. */
+    const batchUnlockObserver = typeof IntersectionObserver === 'function'
+        ? new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const batchIndex = Number(entry.target.getAttribute('data-gss-batch-index'));
+                if (!Number.isNaN(batchIndex)) {
+                    unlockBatch(batchIndex);
+                }
+            }
+        }, { root: null, rootMargin: '0px', threshold: 0.01 })
+        : null;
+
+    function unlockBatch(batchIndex) {
+        if (unlockedBatches.has(batchIndex)) return;
+        unlockedBatches.add(batchIndex);
+        processUnlockedEntries();
+    }
+
+    function processUnlockedEntries() {
+        for (const entry of repoEntries) {
+            if (entry.fetchStarted) continue;
+            if (!unlockedBatches.has(entry.batchIndex)) continue;
+            entry.fetchStarted = true;
+            entry.badge.title = `Loading stars for ${entry.repoPath}`;
+
+            getRepoInfo(entry.repoPath)
+                .then((info) => updateBadge(entry.badge, entry.repoPath, info))
+                .catch((err) => setBadgeError(entry.badge, entry.repoPath, err));
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Link processing
     // -------------------------------------------------------------------------
 
@@ -387,9 +432,18 @@
         const badge = createBadge();
         anchor.insertAdjacentElement('afterend', badge);
 
-        getRepoInfo(repoPath)
-            .then((info) => updateBadge(badge, repoPath, info))
-            .catch((err) => setBadgeError(badge, repoPath, err));
+        const batchIndex = Math.floor(repoEntries.length / FETCH_BATCH_SIZE);
+        anchor.setAttribute('data-gss-batch-index', String(batchIndex));
+        repoEntries.push({ anchor, badge, repoPath, batchIndex, fetchStarted: false });
+
+        if (batchUnlockObserver) {
+            batchUnlockObserver.observe(anchor);
+        } else {
+            // Fallback for very old browsers: no viewport signal, unlock all.
+            unlockedBatches.add(batchIndex);
+        }
+
+        processUnlockedEntries();
     }
 
     // -------------------------------------------------------------------------
