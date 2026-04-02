@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Show Stars
 // @namespace    https://github.com/h4rvey-g/github-show-stars
-// @version      1.0.0
+// @version      1.2.0
 // @description  Show star counts after every GitHub repo link on all webpages
 // @author       h4rvey-g
 // @match        *://*/*
@@ -113,6 +113,9 @@
     /** Class name used on injected star badges. */
     const BADGE_CLASS = 'gss-star-badge';
 
+    /** Keyword used to identify awesome repositories. */
+    const AWESOME_KEYWORD = 'awesome';
+
     // -------------------------------------------------------------------------
     // In-memory cache  { "owner/repo": { stars: Number, pushedAt: String, createdAt: String, ts: Number } }
     // -------------------------------------------------------------------------
@@ -176,9 +179,314 @@
                     background: #3d1414;
                 }
             }
+            .gss-awesome-panel {
+                position: fixed;
+                width: 320px;
+                max-height: min(55vh, 460px);
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                border-radius: 12px;
+                border: 1px solid #d0d7de;
+                background: rgba(255, 255, 255, 0.96);
+                box-shadow: 0 10px 30px rgba(31, 35, 40, 0.15);
+                backdrop-filter: blur(6px);
+                z-index: 2147483647;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            }
+            .gss-awesome-panel__header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                padding: 10px 12px;
+                border-bottom: 1px solid #d8dee4;
+                font-size: 13px;
+                font-weight: 700;
+                color: #24292f;
+                background: #f6f8fa;
+                cursor: move;
+                user-select: none;
+            }
+            .gss-awesome-panel__count {
+                font-size: 12px;
+                font-weight: 600;
+                color: #57606a;
+            }
+            .gss-awesome-panel__body {
+                overflow: auto;
+                padding: 6px 8px;
+            }
+            .gss-awesome-panel__empty {
+                margin: 8px 4px;
+                padding: 10px;
+                border-radius: 8px;
+                font-size: 12px;
+                color: #57606a;
+                background: #f6f8fa;
+                border: 1px dashed #d0d7de;
+            }
+            .gss-awesome-item {
+                display: flex;
+                align-items: baseline;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 6px 8px;
+                margin: 2px 0;
+                border-radius: 8px;
+                text-decoration: none;
+                color: inherit;
+            }
+            .gss-awesome-item:hover {
+                background: #eaeef2;
+            }
+            .gss-awesome-item__repo {
+                font-size: 12px;
+                color: #0969da;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .gss-awesome-item__stars {
+                font-size: 12px;
+                font-weight: 700;
+                color: #24292f;
+                white-space: nowrap;
+            }
+            @media (prefers-color-scheme: dark) {
+                .gss-awesome-panel {
+                    border-color: #30363d;
+                    background: rgba(22, 27, 34, 0.96);
+                    box-shadow: 0 10px 30px rgba(1, 4, 9, 0.45);
+                }
+                .gss-awesome-panel__header {
+                    color: #f0f6fc;
+                    background: #161b22;
+                    border-bottom-color: #30363d;
+                }
+                .gss-awesome-panel__count,
+                .gss-awesome-panel__empty {
+                    color: #8b949e;
+                }
+                .gss-awesome-panel__empty {
+                    border-color: #30363d;
+                    background: #0d1117;
+                }
+                .gss-awesome-item:hover {
+                    background: #21262d;
+                }
+                .gss-awesome-item__repo {
+                    color: #58a6ff;
+                }
+                .gss-awesome-item__stars {
+                    color: #c9d1d9;
+                }
+            }
         `;
         document.head.appendChild(style);
     })();
+
+    // -------------------------------------------------------------------------
+    // Awesome repo floating panel (sorted by stars desc)
+    // -------------------------------------------------------------------------
+    const awesomeRepoMap = new Map();
+    let awesomePanelBody = null;
+    let awesomePanelCount = null;
+    const PANEL_POSITION_KEY = 'awesome_panel_position_v1';
+
+    function ensureAwesomePanel() {
+        if (awesomePanelBody) return;
+
+        const panel = document.createElement('section');
+        panel.className = 'gss-awesome-panel';
+        panel.setAttribute('aria-label', 'Awesome repositories sorted by stars');
+        panel.innerHTML = `
+            <div class="gss-awesome-panel__header">
+                <span>Awesome Repos ⭐</span>
+                <span class="gss-awesome-panel__count">0</span>
+            </div>
+            <div class="gss-awesome-panel__body"></div>
+        `;
+
+        awesomePanelBody = panel.querySelector('.gss-awesome-panel__body');
+        awesomePanelCount = panel.querySelector('.gss-awesome-panel__count');
+        applyInitialPanelPosition(panel);
+        bindPanelDrag(panel);
+        document.body.appendChild(panel);
+        renderAwesomePanel();
+    }
+
+    function applyPanelPosition(panel, left, top) {
+        const maxLeft = Math.max(8, window.innerWidth - panel.offsetWidth - 8);
+        const maxTop = Math.max(8, window.innerHeight - panel.offsetHeight - 8);
+        const safeLeft = Math.min(Math.max(8, left), maxLeft);
+        const safeTop = Math.min(Math.max(8, top), maxTop);
+        panel.style.left = `${safeLeft}px`;
+        panel.style.top = `${safeTop}px`;
+    }
+
+    function getSavedPanelPosition() {
+        const raw = GM_getValue(PANEL_POSITION_KEY, '');
+        if (!raw) return null;
+        try {
+            const parsed = JSON.parse(raw);
+            if (typeof parsed?.left !== 'number' || typeof parsed?.top !== 'number') return null;
+            return parsed;
+        } catch {
+            return null;
+        }
+    }
+
+    function savePanelPosition(left, top) {
+        GM_setValue(PANEL_POSITION_KEY, JSON.stringify({ left, top }));
+    }
+
+    function getSmartDefaultPosition(panel) {
+        const margin = 16;
+        const panelWidth = panel.offsetWidth;
+        const panelHeight = panel.offsetHeight;
+        const defaultPos = {
+            left: window.innerWidth - panelWidth - margin,
+            top: 88,
+        };
+
+        const readme = document.querySelector('#readme');
+        if (!readme) return defaultPos;
+
+        const rect = readme.getBoundingClientRect();
+        const overlapsHorizontally = defaultPos.left < rect.right && defaultPos.left + panelWidth > rect.left;
+        const overlapsVertically = defaultPos.top < rect.bottom && defaultPos.top + panelHeight > rect.top;
+        if (!overlapsHorizontally || !overlapsVertically) return defaultPos;
+
+        const rightSpace = window.innerWidth - rect.right;
+        if (rightSpace >= panelWidth + margin) {
+            return { left: rect.right + margin, top: Math.max(88, rect.top) };
+        }
+
+        const leftSpace = rect.left;
+        if (leftSpace >= panelWidth + margin) {
+            return { left: rect.left - panelWidth - margin, top: Math.max(88, rect.top) };
+        }
+
+        return defaultPos;
+    }
+
+    function applyInitialPanelPosition(panel) {
+        panel.style.visibility = 'hidden';
+        document.body.appendChild(panel);
+
+        const saved = getSavedPanelPosition();
+        if (saved) {
+            applyPanelPosition(panel, saved.left, saved.top);
+        } else {
+            const pos = getSmartDefaultPosition(panel);
+            applyPanelPosition(panel, pos.left, pos.top);
+            savePanelPosition(pos.left, pos.top);
+        }
+
+        panel.remove();
+        panel.style.visibility = '';
+    }
+
+    function bindPanelDrag(panel) {
+        const header = panel.querySelector('.gss-awesome-panel__header');
+        if (!header) return;
+
+        let dragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+        let pointerId = null;
+
+        const onPointerMove = (event) => {
+            if (!dragging) return;
+            const left = event.clientX - offsetX;
+            const top = event.clientY - offsetY;
+            applyPanelPosition(panel, left, top);
+        };
+
+        const onPointerUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            if (pointerId !== null) {
+                header.releasePointerCapture?.(pointerId);
+            }
+            pointerId = null;
+            const left = Number.parseFloat(panel.style.left) || 0;
+            const top = Number.parseFloat(panel.style.top) || 0;
+            savePanelPosition(left, top);
+        };
+
+        header.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            dragging = true;
+            pointerId = event.pointerId;
+            header.setPointerCapture?.(pointerId);
+            const rect = panel.getBoundingClientRect();
+            offsetX = event.clientX - rect.left;
+            offsetY = event.clientY - rect.top;
+            event.preventDefault();
+        });
+
+        header.addEventListener('pointermove', onPointerMove);
+        header.addEventListener('pointerup', onPointerUp);
+        header.addEventListener('pointercancel', onPointerUp);
+
+        window.addEventListener('resize', () => {
+            const left = Number.parseFloat(panel.style.left) || 0;
+            const top = Number.parseFloat(panel.style.top) || 0;
+            applyPanelPosition(panel, left, top);
+            savePanelPosition(
+                Number.parseFloat(panel.style.left) || 0,
+                Number.parseFloat(panel.style.top) || 0
+            );
+        });
+    }
+
+    function isAwesomeRepo(repoPath) {
+        return repoPath.toLowerCase().includes(AWESOME_KEYWORD);
+    }
+
+    function upsertAwesomeRepo(repoPath, stars) {
+        if (!isAwesomeRepo(repoPath)) return;
+        ensureAwesomePanel();
+        awesomeRepoMap.set(repoPath, stars);
+        renderAwesomePanel();
+    }
+
+    function renderAwesomePanel() {
+        if (!awesomePanelBody || !awesomePanelCount) return;
+
+        const sortedEntries = Array.from(awesomeRepoMap.entries())
+            .sort((a, b) => {
+                if (b[1] !== a[1]) return b[1] - a[1];
+                return a[0].localeCompare(b[0]);
+            });
+
+        awesomePanelCount.textContent = `${sortedEntries.length}`;
+        if (sortedEntries.length === 0) {
+            awesomePanelBody.innerHTML = `
+                <div class="gss-awesome-panel__empty">
+                    尚未获取到包含 "awesome" 的仓库信息。
+                </div>
+            `;
+            return;
+        }
+
+        awesomePanelBody.innerHTML = '';
+        for (const [repoPath, stars] of sortedEntries) {
+            const item = document.createElement('a');
+            item.className = 'gss-awesome-item';
+            item.href = `https://github.com/${repoPath}`;
+            item.target = '_blank';
+            item.rel = 'noopener noreferrer';
+            item.title = `${repoPath} • ${stars.toLocaleString()} stars`;
+            item.innerHTML = `
+                <span class="gss-awesome-item__repo">${repoPath}</span>
+                <span class="gss-awesome-item__stars">⭐ ${formatStars(stars)}</span>
+            `;
+            awesomePanelBody.appendChild(item);
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -359,6 +667,7 @@
         if (info.createdAt) tooltip += `\nCreated: ${timeAgo(info.createdAt)}`;
         badge.title = tooltip;
         badge.textContent = `⭐ ${formatStars(info.stars)}`;
+        upsertAwesomeRepo(repoPath, info.stars);
     }
 
     function setBadgeError(badge, repoPath, err) {
