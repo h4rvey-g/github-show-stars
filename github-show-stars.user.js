@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Show Stars
 // @namespace    https://github.com/h4rvey-g/github-show-stars
-// @version      1.2.0
+// @version      1.2.1
 // @description  Show star counts after every GitHub repo link on all webpages
 // @author       h4rvey-g
 // @match        *://*/*
@@ -115,6 +115,38 @@
 
     /** Keyword used to identify awesome repositories. */
     const AWESOME_KEYWORD = 'awesome';
+
+    /**
+     * Extract "owner/repo" from a GitHub pathname.
+     * When allowSubpaths is true, additional path segments are allowed after the
+     * repository name (e.g. /owner/repo/issues/1).
+     */
+    function extractGitHubRepoPath(pathname, { allowSubpaths = false } = {}) {
+        const parts = pathname.split('/').filter(Boolean);
+        if (parts.length < 2) return null;
+        if (!allowSubpaths && parts.length !== 2) return null;
+
+        const [owner, repo] = parts;
+        if (!owner || !repo) return null;
+        if (owner.startsWith('.') || repo.startsWith('.')) return null;
+        if (RESERVED_TOP_LEVEL_PATHS.has(owner.toLowerCase())) return null;
+        if (repo === 'repositories') return null;
+
+        return `${owner}/${repo}`;
+    }
+
+    /** Current GitHub repository page, if the current page is inside a repo. */
+    const CURRENT_PAGE_REPO = window.location.hostname === 'github.com'
+        ? extractGitHubRepoPath(window.location.pathname, { allowSubpaths: true })
+        : null;
+
+    /**
+     * The floating sorting panel is only enabled on GitHub repository pages
+     * whose own repository path contains "awesome".
+     */
+    const AWESOME_FEATURE_ENABLED = Boolean(
+        CURRENT_PAGE_REPO && CURRENT_PAGE_REPO.toLowerCase().includes(AWESOME_KEYWORD)
+    );
 
     // -------------------------------------------------------------------------
     // In-memory cache  { "owner/repo": { stars: Number, pushedAt: String, createdAt: String, ts: Number } }
@@ -287,7 +319,7 @@
     })();
 
     // -------------------------------------------------------------------------
-    // Awesome repo floating panel (sorted by stars desc)
+    // Linked repo floating panel for GitHub awesome repository pages
     // -------------------------------------------------------------------------
     const awesomeRepoMap = new Map();
     let awesomePanelBody = null;
@@ -295,14 +327,14 @@
     const PANEL_POSITION_KEY = 'awesome_panel_position_v1';
 
     function ensureAwesomePanel() {
-        if (awesomePanelBody) return;
+        if (!AWESOME_FEATURE_ENABLED || awesomePanelBody) return;
 
         const panel = document.createElement('section');
         panel.className = 'gss-awesome-panel';
-        panel.setAttribute('aria-label', 'Awesome repositories sorted by stars');
+        panel.setAttribute('aria-label', 'Repositories linked from this awesome GitHub repository, sorted by stars');
         panel.innerHTML = `
             <div class="gss-awesome-panel__header">
-                <span>Awesome Repos ⭐</span>
+                <span>Linked Repos ⭐</span>
                 <span class="gss-awesome-panel__count">0</span>
             </div>
             <div class="gss-awesome-panel__body"></div>
@@ -442,12 +474,13 @@
         });
     }
 
-    function isAwesomeRepo(repoPath) {
-        return repoPath.toLowerCase().includes(AWESOME_KEYWORD);
+    function shouldTrackRepoInAwesomePanel(repoPath) {
+        if (!AWESOME_FEATURE_ENABLED || !repoPath) return false;
+        return repoPath.toLowerCase() !== CURRENT_PAGE_REPO.toLowerCase();
     }
 
     function upsertAwesomeRepo(repoPath, stars) {
-        if (!isAwesomeRepo(repoPath)) return;
+        if (!shouldTrackRepoInAwesomePanel(repoPath)) return;
         ensureAwesomePanel();
         awesomeRepoMap.set(repoPath, stars);
         renderAwesomePanel();
@@ -466,7 +499,7 @@
         if (sortedEntries.length === 0) {
             awesomePanelBody.innerHTML = `
                 <div class="gss-awesome-panel__empty">
-                    尚未获取到包含 "awesome" 的仓库信息。
+                    No linked GitHub repositories have been loaded yet.
                 </div>
             `;
             return;
@@ -537,16 +570,7 @@
             // Only handle github.com links
             if (url.hostname !== 'github.com') return null;
 
-            const parts = url.pathname.split('/').filter(Boolean);
-            if (parts.length !== 2) return null;
-
-            const [owner, repo] = parts;
-            if (!owner || !repo) return null;
-            if (owner.startsWith('.') || repo.startsWith('.')) return null;
-            if (RESERVED_TOP_LEVEL_PATHS.has(owner.toLowerCase())) return null;
-            if (repo === 'repositories') return null;
-
-            return `${owner}/${repo}`;
+            return extractGitHubRepoPath(url.pathname);
         } catch {
             return null;
         }
@@ -745,7 +769,9 @@
         anchor.setAttribute('data-gss-batch-index', String(batchIndex));
         repoEntries.push({ anchor, badge, repoPath, batchIndex, fetchStarted: false });
 
-        if (batchUnlockObserver) {
+        if (AWESOME_FEATURE_ENABLED) {
+            unlockedBatches.add(batchIndex);
+        } else if (batchUnlockObserver) {
             batchUnlockObserver.observe(anchor);
         } else {
             // Fallback for very old browsers: no viewport signal, unlock all.
@@ -791,8 +817,11 @@
     }
 
     function enqueueLinks(root) {
+        const selector = window.location.hostname === 'github.com'
+            ? `a[href*="${GITHUB_HREF_FILTER}"]:not([${PROCESSED_ATTR}]), a[href^="/"]:not([${PROCESSED_ATTR}])`
+            : `a[href*="${GITHUB_HREF_FILTER}"]:not([${PROCESSED_ATTR}])`;
         const anchors = root.querySelectorAll
-            ? root.querySelectorAll(`a[href*="${GITHUB_HREF_FILTER}"]:not([${PROCESSED_ATTR}])`)
+            ? root.querySelectorAll(selector)
             : [];
         anchors.forEach((a) => pendingAnchors.push(a));
         if (!idleCallbackScheduled && pendingAnchors.length > 0) {
