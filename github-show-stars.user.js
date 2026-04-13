@@ -596,6 +596,13 @@
         if (!CURRENT_PAGE_REPO || !repoPath) return false;
         if (repoPath.toLowerCase() !== CURRENT_PAGE_REPO.toLowerCase()) return false;
 
+        // Repository header / navigation chrome on GitHub repo pages. These
+        // links point to the current repo as part of page navigation, not as
+        // content references that benefit from a star badge.
+        if (anchor.closest('#repository-container-header, nav[aria-label="Repository"], .js-repo-nav, .UnderlineNav')) {
+            return true;
+        }
+
         // Repository title breadcrumb/header link.
         if (anchor.closest('strong[itemprop="name"]')) return true;
 
