@@ -591,6 +591,43 @@
         }
     }
 
+    function isGitHubRepoChromeLink(anchor, repoPath) {
+        if (window.location.hostname !== 'github.com') return false;
+        if (!CURRENT_PAGE_REPO || !repoPath) return false;
+        if (repoPath.toLowerCase() !== CURRENT_PAGE_REPO.toLowerCase()) return false;
+
+        // Repository title breadcrumb/header link.
+        if (anchor.closest('strong[itemprop="name"]')) return true;
+
+        // GitHub repository navigation / toolbar links that point back to the
+        // current repo root and should not get an extra star badge.
+        if (anchor.id === 'code-tab' || anchor.id === 'code-view-repo-link') return true;
+        if (anchor.closest('[data-menu-item="i0code-tab"]')) return true;
+
+        return false;
+    }
+
+    function shouldSkipBadgeForAnchor(anchor, repoPath) {
+        if (!anchor || !repoPath) return true;
+
+        // Avoid recursively decorating our own floating panel items.
+        if (anchor.closest('.gss-awesome-panel')) return true;
+
+        // GitHub keeps some repo-root navigation links hidden in the DOM.
+        // Adding badges after those invisible anchors makes the badge appear in
+        // odd places around the toolbar.
+        if (
+            window.location.hostname === 'github.com' &&
+            CURRENT_PAGE_REPO &&
+            repoPath.toLowerCase() === CURRENT_PAGE_REPO.toLowerCase() &&
+            anchor.closest('[hidden]')
+        ) {
+            return true;
+        }
+
+        return isGitHubRepoChromeLink(anchor, repoPath);
+    }
+
     /**
      * Fetch repo info for "owner/repo" via the GitHub REST API.
      * Returns a Promise<{ stars, pushedAt, createdAt }>.
@@ -779,10 +816,14 @@
      */
     function processLink(anchor) {
         if (anchor.hasAttribute(PROCESSED_ATTR)) return;
-        anchor.setAttribute(PROCESSED_ATTR, '1');
 
         const repoPath = extractRepo(anchor.href);
-        if (!repoPath) return;
+        if (!repoPath || shouldSkipBadgeForAnchor(anchor, repoPath)) {
+            anchor.setAttribute(PROCESSED_ATTR, '1');
+            return;
+        }
+
+        anchor.setAttribute(PROCESSED_ATTR, '1');
 
         const badge = createBadge();
         anchor.insertAdjacentElement('afterend', badge);
