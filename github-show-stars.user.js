@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Show Stars
 // @namespace    https://github.com/h4rvey-g/github-show-stars
-// @version      1.2.1
+// @version      1.2.2
 // @description  Show star counts after every GitHub repo link on all webpages
 // @author       h4rvey-g
 // @match        *://*/*
@@ -220,10 +220,10 @@
                 flex-direction: column;
                 border-radius: 12px;
                 border: 1px solid #d0d7de;
-                background: rgba(255, 255, 255, 0.96);
+                background: #ffffff;
                 box-shadow: 0 10px 30px rgba(31, 35, 40, 0.15);
-                backdrop-filter: blur(6px);
                 z-index: 2147483647;
+                contain: layout paint;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
             }
             .gss-awesome-panel__header {
@@ -288,7 +288,7 @@
             @media (prefers-color-scheme: dark) {
                 .gss-awesome-panel {
                     border-color: #30363d;
-                    background: rgba(22, 27, 34, 0.96);
+                    background: #161b22;
                     box-shadow: 0 10px 30px rgba(1, 4, 9, 0.45);
                 }
                 .gss-awesome-panel__header {
@@ -325,6 +325,8 @@
     let awesomePanelBody = null;
     let awesomePanelCount = null;
     const PANEL_POSITION_KEY = 'awesome_panel_position_v1';
+    const AWESOME_PANEL_RENDER_DELAY_MS = 120;
+    let awesomePanelRenderTimer = null;
 
     function ensureAwesomePanel() {
         if (!AWESOME_FEATURE_ENABLED || awesomePanelBody) return;
@@ -479,11 +481,24 @@
         return repoPath.toLowerCase() !== CURRENT_PAGE_REPO.toLowerCase();
     }
 
+    function scheduleAwesomePanelRender() {
+        if (awesomePanelRenderTimer !== null) return;
+        awesomePanelRenderTimer = window.setTimeout(() => {
+            awesomePanelRenderTimer = null;
+            renderAwesomePanel();
+        }, AWESOME_PANEL_RENDER_DELAY_MS);
+    }
+
     function upsertAwesomeRepo(repoPath, stars) {
         if (!shouldTrackRepoInAwesomePanel(repoPath)) return;
-        ensureAwesomePanel();
+        if (awesomeRepoMap.get(repoPath) === stars) return;
         awesomeRepoMap.set(repoPath, stars);
-        renderAwesomePanel();
+        if (!awesomePanelBody || !awesomePanelCount) {
+            ensureAwesomePanel();
+            return;
+        }
+        awesomePanelCount.textContent = `${awesomeRepoMap.size}`;
+        scheduleAwesomePanelRender();
     }
 
     function renderAwesomePanel() {
@@ -497,15 +512,14 @@
 
         awesomePanelCount.textContent = `${sortedEntries.length}`;
         if (sortedEntries.length === 0) {
-            awesomePanelBody.innerHTML = `
-                <div class="gss-awesome-panel__empty">
-                    No linked GitHub repositories have been loaded yet.
-                </div>
-            `;
+            const empty = document.createElement('div');
+            empty.className = 'gss-awesome-panel__empty';
+            empty.textContent = 'No linked GitHub repositories have been loaded yet.';
+            awesomePanelBody.replaceChildren(empty);
             return;
         }
 
-        awesomePanelBody.innerHTML = '';
+        const fragment = document.createDocumentFragment();
         for (const [repoPath, stars] of sortedEntries) {
             const item = document.createElement('a');
             item.className = 'gss-awesome-item';
@@ -517,8 +531,9 @@
                 <span class="gss-awesome-item__repo">${repoPath}</span>
                 <span class="gss-awesome-item__stars">⭐ ${formatStars(stars)}</span>
             `;
-            awesomePanelBody.appendChild(item);
+            fragment.appendChild(item);
         }
+        awesomePanelBody.replaceChildren(fragment);
     }
 
     // -------------------------------------------------------------------------
@@ -734,16 +749,23 @@
         processUnlockedEntries();
     }
 
+    function startRepoFetch(entry) {
+        if (entry.fetchStarted) return;
+        entry.fetchStarted = true;
+        if (batchUnlockObserver) {
+            batchUnlockObserver.unobserve(entry.anchor);
+        }
+        entry.badge.title = `Loading stars for ${entry.repoPath}`;
+
+        getRepoInfo(entry.repoPath)
+            .then((info) => updateBadge(entry.badge, entry.repoPath, info))
+            .catch((err) => setBadgeError(entry.badge, entry.repoPath, err));
+    }
+
     function processUnlockedEntries() {
         for (const entry of repoEntries) {
-            if (entry.fetchStarted) continue;
             if (!unlockedBatches.has(entry.batchIndex)) continue;
-            entry.fetchStarted = true;
-            entry.badge.title = `Loading stars for ${entry.repoPath}`;
-
-            getRepoInfo(entry.repoPath)
-                .then((info) => updateBadge(entry.badge, entry.repoPath, info))
-                .catch((err) => setBadgeError(entry.badge, entry.repoPath, err));
+            startRepoFetch(entry);
         }
     }
 
@@ -767,18 +789,18 @@
 
         const batchIndex = Math.floor(repoEntries.length / FETCH_BATCH_SIZE);
         anchor.setAttribute('data-gss-batch-index', String(batchIndex));
-        repoEntries.push({ anchor, badge, repoPath, batchIndex, fetchStarted: false });
+        const entry = { anchor, badge, repoPath, batchIndex, fetchStarted: false };
+        repoEntries.push(entry);
 
-        if (AWESOME_FEATURE_ENABLED) {
-            unlockedBatches.add(batchIndex);
+        if (AWESOME_FEATURE_ENABLED || unlockedBatches.has(batchIndex)) {
+            startRepoFetch(entry);
         } else if (batchUnlockObserver) {
             batchUnlockObserver.observe(anchor);
         } else {
             // Fallback for very old browsers: no viewport signal, unlock all.
             unlockedBatches.add(batchIndex);
+            startRepoFetch(entry);
         }
-
-        processUnlockedEntries();
     }
 
     // -------------------------------------------------------------------------
