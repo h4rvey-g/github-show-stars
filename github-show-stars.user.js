@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Show Stars
 // @namespace    https://github.com/h4rvey-g/github-show-stars
-// @version      1.2.3
+// @version      1.2.4
 // @description  Show star counts after every GitHub repo link on all webpages
 // @author       h4rvey-g
 // @match        *://*/*
@@ -745,8 +745,87 @@
     // -------------------------------------------------------------------------
 
     const TOOLTIP_ID = 'gss-star-tooltip';
+    // Google Search sometimes flips result blocks with nested scaleY(-1)
+    // transforms to change visual order. Badges inserted as siblings can inherit
+    // only the outer flip, so compensate when ancestors mirror the coordinate system.
+    const TRANSFORM_EPSILON = 0.001;
     let tooltipElement = null;
     let activeTooltipBadge = null;
+
+    function multiply2dMatrix(left, right) {
+        return {
+            a: (left.a * right.a) + (left.c * right.b),
+            b: (left.b * right.a) + (left.d * right.b),
+            c: (left.a * right.c) + (left.c * right.d),
+            d: (left.b * right.c) + (left.d * right.d),
+        };
+    }
+
+    function parseTransformMatrix(transform) {
+        if (!transform || transform === 'none') return null;
+
+        if (typeof DOMMatrixReadOnly === 'function') {
+            try {
+                const matrix = new DOMMatrixReadOnly(transform);
+                return { a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d };
+            } catch {
+                // Fall through to the string parser for older/quirky browsers.
+            }
+        }
+
+        const matrix2d = transform.match(/^matrix\(([^)]+)\)$/);
+        if (matrix2d) {
+            const values = matrix2d[1].split(/,\s*/).map(Number.parseFloat);
+            if (values.length === 6 && values.every(Number.isFinite)) {
+                return { a: values[0], b: values[1], c: values[2], d: values[3] };
+            }
+        }
+
+        const matrix3d = transform.match(/^matrix3d\(([^)]+)\)$/);
+        if (matrix3d) {
+            const values = matrix3d[1].split(/,\s*/).map(Number.parseFloat);
+            if (values.length === 16 && values.every(Number.isFinite)) {
+                return { a: values[0], b: values[1], c: values[4], d: values[5] };
+            }
+        }
+
+        return null;
+    }
+
+    function getCumulativeAncestorMatrix(element) {
+        let cumulative = { a: 1, b: 0, c: 0, d: 1 };
+        for (let node = element.parentElement; node; node = node.parentElement) {
+            const matrix = parseTransformMatrix(getComputedStyle(node).transform);
+            if (matrix) {
+                cumulative = multiply2dMatrix(matrix, cumulative);
+            }
+        }
+        return cumulative;
+    }
+
+    function getCounterFlipTransform(element) {
+        const matrix = getCumulativeAncestorMatrix(element);
+        const xAxisIsMostlyHorizontal = Math.abs(matrix.a) >= Math.abs(matrix.b);
+        const yAxisIsMostlyVertical = Math.abs(matrix.d) >= Math.abs(matrix.c);
+        const flipX = xAxisIsMostlyHorizontal && matrix.a < -TRANSFORM_EPSILON;
+        const flipY = yAxisIsMostlyVertical && matrix.d < -TRANSFORM_EPSILON;
+
+        if (flipX && flipY) return 'scale(-1, -1)';
+        if (flipX) return 'scaleX(-1)';
+        if (flipY) return 'scaleY(-1)';
+        return '';
+    }
+
+    function keepBadgeUprightInTransformedContext(badge) {
+        const counterTransform = getCounterFlipTransform(badge);
+        if (counterTransform) {
+            badge.style.transform = counterTransform;
+            badge.style.transformOrigin = 'center';
+        } else {
+            badge.style.removeProperty('transform');
+            badge.style.removeProperty('transform-origin');
+        }
+    }
 
     function ensureTooltipElement() {
         if (tooltipElement) return tooltipElement;
@@ -938,6 +1017,11 @@
 
         const badge = createBadge();
         anchor.insertAdjacentElement('afterend', badge);
+        keepBadgeUprightInTransformedContext(badge);
+        const scheduleTransformCheck = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : (callback) => setTimeout(callback, 0);
+        scheduleTransformCheck(() => keepBadgeUprightInTransformedContext(badge));
 
         const batchIndex = Math.floor(repoEntries.length / FETCH_BATCH_SIZE);
         anchor.setAttribute('data-gss-batch-index', String(batchIndex));
