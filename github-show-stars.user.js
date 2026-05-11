@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Show Stars
 // @namespace    https://github.com/h4rvey-g/github-show-stars
-// @version      1.2.2
+// @version      1.2.3
 // @description  Show star counts after every GitHub repo link on all webpages
 // @author       h4rvey-g
 // @match        *://*/*
@@ -190,6 +190,22 @@
                 color: #cf222e;
                 border-color: #f8d7da;
                 background: #fff0f0;
+            }
+            .gss-star-tooltip {
+                position: fixed;
+                z-index: 2147483647;
+                max-width: min(320px, calc(100vw - 16px));
+                padding: 6px 8px;
+                border-radius: 6px;
+                background: #24292f;
+                color: #ffffff;
+                box-shadow: 0 8px 24px rgba(31, 35, 40, 0.22);
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                font-size: 12px;
+                font-weight: 500;
+                line-height: 1.4;
+                white-space: pre-line;
+                pointer-events: none;
             }
             @media (prefers-color-scheme: dark) {
                 .${BADGE_CLASS} {
@@ -728,6 +744,92 @@
     // Badge rendering
     // -------------------------------------------------------------------------
 
+    const TOOLTIP_ID = 'gss-star-tooltip';
+    let tooltipElement = null;
+    let activeTooltipBadge = null;
+
+    function ensureTooltipElement() {
+        if (tooltipElement) return tooltipElement;
+
+        tooltipElement = document.createElement('div');
+        tooltipElement.id = TOOLTIP_ID;
+        tooltipElement.className = 'gss-star-tooltip';
+        tooltipElement.setAttribute('role', 'tooltip');
+        tooltipElement.hidden = true;
+        document.body.appendChild(tooltipElement);
+        return tooltipElement;
+    }
+
+    function positionTooltip(badge) {
+        if (!tooltipElement || tooltipElement.hidden || !badge.isConnected) return;
+
+        const margin = 8;
+        const gap = 6;
+        const badgeRect = badge.getBoundingClientRect();
+        const tooltipRect = tooltipElement.getBoundingClientRect();
+
+        let left = badgeRect.left + (badgeRect.width / 2) - (tooltipRect.width / 2);
+        left = Math.min(Math.max(margin, left), window.innerWidth - tooltipRect.width - margin);
+
+        let top = badgeRect.top - tooltipRect.height - gap;
+        if (top < margin) {
+            top = badgeRect.bottom + gap;
+        }
+        if (top + tooltipRect.height > window.innerHeight - margin) {
+            top = Math.max(margin, window.innerHeight - tooltipRect.height - margin);
+        }
+
+        tooltipElement.style.left = `${Math.round(left)}px`;
+        tooltipElement.style.top = `${Math.round(top)}px`;
+    }
+
+    function showTooltip(badge) {
+        const text = badge.dataset.gssTooltip;
+        if (!text) return;
+
+        const tooltip = ensureTooltipElement();
+        activeTooltipBadge = badge;
+        tooltip.textContent = text;
+        tooltip.hidden = false;
+        badge.setAttribute('aria-describedby', TOOLTIP_ID);
+        positionTooltip(badge);
+    }
+
+    function hideTooltip(badge) {
+        if (badge && activeTooltipBadge !== badge) return;
+        if (activeTooltipBadge) {
+            activeTooltipBadge.removeAttribute('aria-describedby');
+        }
+        activeTooltipBadge = null;
+        if (tooltipElement) {
+            tooltipElement.hidden = true;
+        }
+    }
+
+    function setBadgeTooltip(badge, text) {
+        badge.dataset.gssTooltip = text;
+        // Native title tooltips have a browser-controlled delay. Use only the
+        // custom tooltip so repository metadata appears immediately on hover.
+        badge.removeAttribute('title');
+        if (activeTooltipBadge === badge) {
+            showTooltip(badge);
+        }
+    }
+
+    function bindBadgeTooltip(badge) {
+        badge.addEventListener('pointerenter', () => showTooltip(badge));
+        badge.addEventListener('pointerleave', () => hideTooltip(badge));
+        badge.addEventListener('pointercancel', () => hideTooltip(badge));
+        badge.addEventListener('pointerdown', () => hideTooltip(badge));
+    }
+
+    window.addEventListener('scroll', () => {
+        if (activeTooltipBadge) positionTooltip(activeTooltipBadge);
+    }, { passive: true, capture: true });
+    window.addEventListener('resize', () => {
+        if (activeTooltipBadge) positionTooltip(activeTooltipBadge);
+    }, { passive: true });
+
     /**
      * Create a loading-state badge element.
      */
@@ -735,7 +837,9 @@
         const badge = document.createElement('span');
         badge.className = `${BADGE_CLASS} ${BADGE_CLASS}--loading`;
         badge.setAttribute('aria-label', 'Loading star count');
+        setBadgeTooltip(badge, 'Loading star count');
         badge.textContent = '⭐ …';
+        bindBadgeTooltip(badge);
         return badge;
     }
 
@@ -748,7 +852,7 @@
         let tooltip = `${info.stars.toLocaleString()} stars — ${repoPath}`;
         if (info.pushedAt) tooltip += `\nLast commit: ${timeAgo(info.pushedAt)}`;
         if (info.createdAt) tooltip += `\nCreated: ${timeAgo(info.createdAt)}`;
-        badge.title = tooltip;
+        setBadgeTooltip(badge, tooltip);
         badge.textContent = `⭐ ${formatStars(info.stars)}`;
         upsertAwesomeRepo(repoPath, info.stars);
     }
@@ -757,7 +861,7 @@
         badge.classList.remove(`${BADGE_CLASS}--loading`);
         badge.classList.add(`${BADGE_CLASS}--error`);
         badge.setAttribute('aria-label', 'Could not load star count');
-        badge.title = `Could not load stars for ${repoPath}: ${err.message}`;
+        setBadgeTooltip(badge, `Could not load stars for ${repoPath}: ${err.message}`);
         badge.textContent = '⭐ ?';
     }
 
@@ -799,7 +903,7 @@
         if (batchUnlockObserver) {
             batchUnlockObserver.unobserve(entry.anchor);
         }
-        entry.badge.title = `Loading stars for ${entry.repoPath}`;
+        setBadgeTooltip(entry.badge, `Loading stars for ${entry.repoPath}`);
 
         getRepoInfo(entry.repoPath)
             .then((info) => updateBadge(entry.badge, entry.repoPath, info))
